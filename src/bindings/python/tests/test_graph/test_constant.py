@@ -274,17 +274,6 @@ def test_init_bf16_direct(ov_type, numpy_dtype, shared_flag):
         (DataGetter.VIEW),
     ],
 )
-@pytest.mark.parametrize(("shared_flag"), [True, False])
-def test_constant_s1_round_trip(shared_flag):
-    data = np.array([[1, -1, 1, -1]], dtype=np.int8)
-
-    ov_const = ops.constant(data, dtype=Type.s1, shared_memory=shared_flag)
-
-    # A set bit is +1: the decoded values are the signs the array spelled.
-    assert np.array_equal(ov_const.get_data(dtype=np.int8, copy=True), data)
-    assert np.array_equal(ov_const.data.astype(np.int8), data)
-
-
 def test_constant_direct_packing(ov_type, src_dtype, shared_flag, data_getter):
     data = np.ones((2, 4, 16)).astype(src_dtype)
 
@@ -302,6 +291,17 @@ def test_constant_direct_packing(ov_type, src_dtype, shared_flag, data_getter):
 
     assert np.array_equal(unpacked, data)
     assert not np.shares_memory(unpacked, data)
+
+
+@pytest.mark.parametrize(("shared_flag"), [True, False])
+def test_constant_s1_round_trip(shared_flag):
+    data = np.array([[1, -1, 1, -1]], dtype=np.int8)
+
+    ov_const = ops.constant(data, dtype=Type.s1, shared_memory=shared_flag)
+
+    # A set bit is +1: the decoded values are the signs the array spelled.
+    assert np.array_equal(ov_const.get_data(dtype=np.int8, copy=True), data)
+    assert np.array_equal(ov_const.data.astype(np.int8), data)
 
 
 @pytest.mark.parametrize(
