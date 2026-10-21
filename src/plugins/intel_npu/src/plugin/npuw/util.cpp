@@ -724,7 +724,7 @@ ov::SoPtr<ov::ITensor> ov::npuw::util::view(const ov::SoPtr<ov::ITensor>& src,
     NPUW_ASSERT(from.size() == to.size());
 
     // Sub-byte views are not supported here
-    NPUW_ASSERT(type != ov::element::u4 && type != ov::element::i4);
+    NPUW_ASSERT(type != ov::element::u4 && type != ov::element::i4 && !ov::npuw::util::is_subbyte(type));
 
     const auto num_dims = from.size();
     ov::Shape view_shape;
@@ -1028,6 +1028,8 @@ ov::Tensor ov::npuw::util::concat(const std::vector<ov::Tensor>& tt, std::size_t
     NPUW_ASSERT(axis == 0 || axis == 2);
 
     const auto type = tt.front().get_element_type();
+    // Only the 4-bit types are packed by this routine; the narrower sub-byte ones would be copied a byte per element.
+    NPUW_ASSERT(!ov::npuw::util::is_subbyte(type));
     auto shape = tt.front().get_shape();
     std::size_t new_dim = 0;
     std::vector<std::size_t> offsets;
