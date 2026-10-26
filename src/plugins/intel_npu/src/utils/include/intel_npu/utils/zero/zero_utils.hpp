@@ -107,6 +107,8 @@ static inline ov::element::Type_t toOVElementType(const ze_graph_argument_precis
         return ov::element::Type_t::f32;
     case ZE_GRAPH_ARGUMENT_PRECISION_FP64:
         return ov::element::Type_t::f64;
+    case ZE_GRAPH_ARGUMENT_PRECISION_INT2:
+        return ov::element::Type_t::i2;
     case ZE_GRAPH_ARGUMENT_PRECISION_INT4:
         return ov::element::Type_t::i4;
     case ZE_GRAPH_ARGUMENT_PRECISION_INT8:
@@ -140,7 +142,9 @@ static inline bool isSameStorageSpelling(const ov::element::Type& first, const o
     const auto a = static_cast<ov::element::Type_t>(first);
     const auto b = static_cast<ov::element::Type_t>(second);
     return (a == ov::element::Type_t::u8 && b == ov::element::Type_t::boolean) ||
-           (a == ov::element::Type_t::boolean && b == ov::element::Type_t::u8);
+           (a == ov::element::Type_t::boolean && b == ov::element::Type_t::u8) ||
+           (a == ov::element::Type_t::u2 && b == ov::element::Type_t::i2) ||
+           (a == ov::element::Type_t::i2 && b == ov::element::Type_t::u2);
 }
 
 static inline std::string getLatestBuildError(ze_graph_dditable_ext_curr_t& _graph_ddi_table_ext) {
