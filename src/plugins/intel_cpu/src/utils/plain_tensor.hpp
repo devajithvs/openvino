@@ -405,7 +405,7 @@ struct PlainTensor {
         if (any_of(m_dt, ov::element::i4, ov::element::u4)) {
             return 2;
         }
-        if (m_dt == ov::element::u2) {
+        if (m_dt == ov::element::u2 || m_dt == ov::element::i2) {
             return 4;
         }
         return 1;
