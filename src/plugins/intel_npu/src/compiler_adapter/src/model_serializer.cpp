@@ -87,6 +87,8 @@ std::string ovPrecisionToLegacyPrecisionString(const ov::element::Type& precisio
         return "FP8_E8M0";
     case ov::element::Type_t::nf4:
         return "NF4";
+    case ov::element::Type_t::i2:
+        return "I2";
     case ov::element::Type_t::i4:
         return "I4";
     case ov::element::Type_t::i8:
