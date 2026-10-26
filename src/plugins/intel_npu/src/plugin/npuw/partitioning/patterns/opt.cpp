@@ -33,14 +33,14 @@ std::shared_ptr<ov::op::v0::Parameter> find_matched_param(const ov::pass::patter
                                : std::static_pointer_cast<ov::op::v0::Parameter>(it->second.get_node_shared_ptr());
 }
 
-// Group-wise weights are i4 without a zero point, or u2 with a zero point of the same type and the scale
+// Group-wise weights are i4 or i2 without a zero point, or u2 with a zero point of the same type and the scale
 // shape. The split-by-groups (full) mode has no zero point support.
 bool is_group_quantized_weight(const std::shared_ptr<ov::op::v0::Parameter>& weight,
                                const std::shared_ptr<ov::op::v0::Parameter>& zerop,
                                const ov::Shape& coeff_shape,
                                const bool mm_dq_full) {
     if (!zerop) {
-        return weight->get_element_type() == ov::element::i4;
+        return weight->get_element_type() == ov::element::i4 || weight->get_element_type() == ov::element::i2;
     }
     return !mm_dq_full && weight->get_element_type() == ov::element::u2 &&
            zerop->get_element_type() == ov::element::u2 && zerop->get_shape() == coeff_shape;
@@ -70,6 +70,13 @@ bool Context::is_closure(const PPtr& param) const {
 }
 
 void Context::permute(const PPtr& orig_param, const Context::Axes& order) {
+    auto it = closures_to_permute.find(orig_param);
+    if (it != closures_to_permute.end()) {
+        // One closure carries one transform per parameter: a second, different order would compose onto the
+        // first one's shape and only the last would reach the bank, so refuse it here.
+        NPUW_ASSERT(it->second == order);
+        return;
+    }
     closures_to_permute[orig_param] = order;
 
     const auto& orig_shape = orig_param->get_shape();
@@ -93,6 +100,17 @@ Context::PPtr Context::subtract_128(const PPtr& orig_param) {
     shifted_param->set_friendly_name(orig_param->get_friendly_name() + "_sub128");
     closures_to_subtract_128.emplace(shifted_param, orig_param);
     return shifted_param;
+}
+
+void Context::to_i4(const PPtr& orig_param) {
+    // Presentation only: the codes keep their values in a wider container (see DQMatMulGQ2iP). The closure can
+    // only be widened from the IR's own sub-byte constant, so a parameter already converted to f16 must not
+    // reach it: the two Convert ops would stack and trip the widening's type assert only at load.
+    NPUW_ASSERT(closures_to_f16.count(orig_param) == 0);
+    closures_to_i4.insert(orig_param);
+
+    orig_param->set_element_type(ov::element::i4);
+    orig_param->validate_and_infer_types();
 }
 
 void Context::register_parallel_matmul(const O& multiply, std::size_t axis, DQParMM&& mm) {
@@ -603,13 +621,23 @@ DQMatMulGQ2i::DQMatMulGQ2i(Context::Ref ctx) {
         auto act_shape = matched_out_mmi.get_shape();
         auto out_shape = matched_node_matmul->output(0).get_shape();
 
+        // A grouped signed 2-bit weight takes the same presentation as `i4`: the banked closure is put in the
+        // [G, N, g] layout with a Transpose back, which is the shape whose per-group convolutions read the
+        // stored codes in place. Without it the weight keeps the export's own [N, G, g] layout and its forward
+        // is unrolled per group, so the device passes over it several times per token. `GQi`/`GQiP` stay
+        // `i4`-only: their layout needs a bit-level host transpose that `util::permute` does not implement for
+        // sub-byte codes.
         if (const auto matched_qzerop = find_matched_param(node_to_output, qzerop);
             is_group_quantized_weight(matched_qweight, matched_qzerop, qcoeff_shape, ctx.get().mm_dq_full) &&
-            qweight_shape.size() == 3 && ov::element::f16 == matched_qcoeff->get_element_type() &&
-            qcoeff_shape.size() == 3 && is_supported_act_rank(act_shape, ctx.get().mm_dq_full) && act_shape[0] == 1 &&
-            act_shape[1] == 1 && qcoeff_shape[0] == qweight_shape[0] && qcoeff_shape[2] == 1 &&
-            qcoeff_shape[1] == qweight_shape[1] && !matched_matmul->get_transpose_a() &&
-            matched_matmul->get_transpose_b()) {
+            qweight_shape.size() == 3 &&
+            // The presentation's swap is a host byte-row copy, so the innermost dimension has to be
+            // byte-aligned; `util::permute` asserts the same bound. A zero-point (u2) weight is permuted by the
+            // u2 path of `util::permute`, which takes unaligned rows too.
+            (matched_qzerop || qweight_shape[2] % (8 / matched_qweight->get_element_type().bitwidth()) == 0) &&
+            ov::element::f16 == matched_qcoeff->get_element_type() && qcoeff_shape.size() == 3 &&
+            is_supported_act_rank(act_shape, ctx.get().mm_dq_full) && act_shape[0] == 1 && act_shape[1] == 1 &&
+            qcoeff_shape[0] == qweight_shape[0] && qcoeff_shape[2] == 1 && qcoeff_shape[1] == qweight_shape[1] &&
+            !matched_matmul->get_transpose_a() && matched_matmul->get_transpose_b()) {
             if (!ctx.get().mm_dq_full) {
                 // Transpose weight and coeff
                 ctx.get().permute(matched_qweight, {1, 0, 2});
@@ -899,11 +927,13 @@ DQMatMulGQ2iP::DQMatMulGQ2iP(Context::Ref ctx) {
             return (a == 1 && b > 1) || (a > 1 && b == 1);
         };
 
+        // As in DQMatMulGQ2i: the multi-token case of the same grouped signed 2-bit presentation.
         if (const auto matched_qzerop = find_matched_param(node_to_output, qzerop);
             is_group_quantized_weight(matched_qweight, matched_qzerop, qcoeff_shape, ctx.get().mm_dq_full) &&
-            qweight_shape.size() == 3 && ov::element::f16 == matched_qcoeff->get_element_type() &&
-            qcoeff_shape.size() == 3 && act_shape.size() == 3 &&
-            just_one(act_shape[0], act_shape[1]) &&  // multi-token case
+            qweight_shape.size() == 3 &&
+            (matched_qzerop || qweight_shape[2] % (8 / matched_qweight->get_element_type().bitwidth()) == 0) &&
+            ov::element::f16 == matched_qcoeff->get_element_type() && qcoeff_shape.size() == 3 &&
+            act_shape.size() == 3 && just_one(act_shape[0], act_shape[1]) &&  // multi-token case
             qcoeff_shape[0] == qweight_shape[0] && qcoeff_shape[1] == qweight_shape[1] && qcoeff_shape[2] == 1 &&
             !matched_matmul->get_transpose_a() && matched_matmul->get_transpose_b()) {
             if (!ctx.get().mm_dq_full) {
@@ -912,6 +942,14 @@ DQMatMulGQ2iP::DQMatMulGQ2iP(Context::Ref ctx) {
                 ctx.get().permute(matched_qcoeff, {1, 0, 2});
                 if (matched_qzerop) {
                     ctx.get().permute(matched_qzerop, {1, 0, 2});
+                }
+
+                // The compiler unrolls a sub-byte weight at this multi-token consumer into per-group
+                // convolutions, because the device's whole-group dequantization decodes `i4`, `i8` and `u2`
+                // codes only, and that plan is ~2x the 4-bit one. Presenting the weight in `i4` keeps the values
+                // (see widen_subbyte_to_i4); the single-token consumer keeps its stored width.
+                if (util::needsWholeGroupWidening(matched_qweight->get_element_type())) {
+                    ctx.get().to_i4(matched_qweight);
                 }
 
                 // Add Transpose and insert it
