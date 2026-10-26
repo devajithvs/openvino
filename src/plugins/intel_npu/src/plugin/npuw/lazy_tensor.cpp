@@ -298,6 +298,50 @@ void Convert::read_weight(const ov::npuw::s11n::WeightsContext& ctx) {
     tensor.read_weight(ctx);
 }
 
+std::size_t Scale::hash() const {
+    std::size_t seed = tensor.get_hash() + 0x9e3779b9;
+    seed ^= std::hash<float>()(factor) + 0x9e3779b9;
+    return seed;
+}
+
+bool Scale::operator==(const Scale& other) const {
+    return (factor == other.factor && tensor == other.tensor);
+}
+
+ov::Tensor Scale::eval() const {
+    const auto src = tensor.eval();
+    const auto type = src.get_element_type();
+    NPUW_ASSERT(type == ov::element::f16 || type == ov::element::f32);
+    ov::Tensor dst(type, src.get_shape());
+    const auto size = src.get_size();
+    if (type == ov::element::f16) {
+        const auto* in = src.data<ov::float16>();
+        auto* out = dst.data<ov::float16>();
+        for (std::size_t i = 0; i < size; ++i) {
+            out[i] = ov::float16(static_cast<float>(in[i]) * factor);
+        }
+    } else {
+        const auto* in = src.data<float>();
+        auto* out = dst.data<float>();
+        for (std::size_t i = 0; i < size; ++i) {
+            out[i] = in[i] * factor;
+        }
+    }
+    return dst;
+}
+
+LazyTensor::Meta Scale::eval_meta() const {
+    return tensor.eval_meta();
+}
+
+void Scale::read_weight(const ov::npuw::s11n::WeightsContext& ctx) {
+    tensor.read_weight(ctx);
+}
+
+void Scale::detach() {
+    tensor.detach();
+}
+
 void Convert::detach() {
     tensor.detach();
 }
@@ -373,6 +417,7 @@ enum class TransformType : std::uint16_t {
     PERMUTE = 4,
     CONVERT = 5,
     GATHER = 6,
+    SCALE = 7,
 };
 
 struct LazyTensorImpl {
@@ -429,6 +474,10 @@ ov::npuw::weights::TransformType get_transform_type(const ov::npuw::weights::op:
 
 ov::npuw::weights::TransformType get_transform_type(const ov::npuw::weights::op::Convert&) {
     return ov::npuw::weights::TransformType::CONVERT;
+}
+
+ov::npuw::weights::TransformType get_transform_type(const ov::npuw::weights::op::Scale&) {
+    return ov::npuw::weights::TransformType::SCALE;
 }
 
 ov::npuw::weights::TransformType get_transform_type(const ov::npuw::weights::op::Gather&) {
@@ -494,6 +543,10 @@ void Convert::serialize(ov::npuw::orc::Stream& stream) {
     }
 }
 
+void Scale::serialize(ov::npuw::orc::Stream& stream) {
+    stream & factor & tensor;
+}
+
 void Gather::serialize(ov::npuw::orc::Stream& stream) {
     std::string type_str;
     if (stream.output()) {
@@ -538,6 +591,9 @@ void LazyTensorImpl::serialize(ov::npuw::orc::Stream& stream) {
         break;
     case TransformType::UNPACK:
         m_transform.emplace<op::Unpack>(ov::npuw::orc::load_versioned_payload<op::Unpack>(section));
+        break;
+    case TransformType::SCALE:
+        m_transform.emplace<op::Scale>(ov::npuw::orc::load_versioned_payload<op::Scale>(section));
         break;
     case TransformType::GATHER:
         m_transform.emplace<op::Gather>(ov::npuw::orc::load_versioned_payload<op::Gather>(section));
@@ -650,6 +706,10 @@ void LazyTensorImpl::get_transformations(std::vector<LazyTensor::Transform>& vec
                        auto next_s_tr = op.s.get_transformations();
                        vec.insert(vec.end(), next_s_tr.begin(), next_s_tr.end());
                    },
+                   [&vec](const op::Scale& op) {
+                       auto next_tr = op.tensor.get_transformations();
+                       vec.insert(vec.end(), next_tr.begin(), next_tr.end());
+                   },
                    [&vec](const op::Gather& op) {
                        auto next_tr = op.w.get_transformations();
                        vec.insert(vec.end(), next_tr.begin(), next_tr.end());
@@ -684,6 +744,12 @@ LazyTensor::LazyTensor(const LazyTensor& cw,
 LazyTensor LazyTensor::permute(const std::vector<std::size_t>& axes) {
     LazyTensor new_lt;
     new_lt.m_impl = std::make_shared<LazyTensorImpl>(op::Permute(*this, axes));
+    return new_lt;
+}
+
+LazyTensor LazyTensor::scale(float factor) {
+    LazyTensor new_lt;
+    new_lt.m_impl = std::make_shared<LazyTensorImpl>(op::Scale(*this, factor));
     return new_lt;
 }
 

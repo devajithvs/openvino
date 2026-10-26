@@ -27,6 +27,7 @@ class Unpack;
 class Permute;
 class Convert;
 class Gather;
+class Scale;
 }  // namespace op
 
 class LazyTensor {
@@ -41,7 +42,8 @@ public:
                                    ov::npuw::weights::op::Unpack,
                                    ov::npuw::weights::op::Permute,
                                    ov::npuw::weights::op::Convert,
-                                   ov::npuw::weights::op::Gather>;
+                                   ov::npuw::weights::op::Gather,
+                                   ov::npuw::weights::op::Scale>;
 
     LazyTensor() = default;
     LazyTensor(const std::shared_ptr<ov::op::v0::Constant>& const_ptr);
@@ -58,6 +60,7 @@ public:
 
     LazyTensor permute(const std::vector<std::size_t>& axes);
     LazyTensor convert(const ov::element::Type& type);
+    LazyTensor scale(float factor);
 
     bool operator==(const LazyTensor& other) const;
     bool operator!=(const LazyTensor& other) const;
@@ -211,6 +214,28 @@ public:
 private:
     LazyTensor tensor;
     ov::element::Type type;
+};
+
+class Scale {
+    friend struct ov::npuw::weights::LazyTensorImpl;
+
+public:
+    static constexpr std::uint16_t kVersion = 0u;
+
+    Scale() = default;
+    Scale(const LazyTensor& _tensor, float _factor) : tensor(_tensor), factor(_factor) {}
+
+    std::size_t hash() const;
+    bool operator==(const Scale& other) const;
+    ov::Tensor eval() const;
+    LazyTensor::Meta eval_meta() const;
+    void read_weight(const ov::npuw::s11n::WeightsContext& ctx);
+    void detach();
+    void serialize(ov::npuw::orc::Stream& stream);
+
+private:
+    LazyTensor tensor;
+    float factor = 1.0f;
 };
 
 class Gather {
