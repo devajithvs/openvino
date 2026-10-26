@@ -136,6 +136,13 @@ static inline ov::element::Type_t toOVElementType(const ze_graph_argument_precis
     }
 }
 
+static inline bool isSameStorageSpelling(const ov::element::Type& first, const ov::element::Type& second) {
+    const auto a = static_cast<ov::element::Type_t>(first);
+    const auto b = static_cast<ov::element::Type_t>(second);
+    return (a == ov::element::Type_t::u8 && b == ov::element::Type_t::boolean) ||
+           (a == ov::element::Type_t::boolean && b == ov::element::Type_t::u8);
+}
+
 static inline std::string getLatestBuildError(ze_graph_dditable_ext_curr_t& _graph_ddi_table_ext) {
     Logger _logger("LevelZeroUtils", Logger::global().level());
     _logger.debug("getLatestBuildError start");
