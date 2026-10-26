@@ -66,9 +66,9 @@ void copy_tensor_with_optional_shape_view(const std::shared_ptr<ov::ITensor>& sr
 
 void align_element_type_with_user_tensor(const std::shared_ptr<intel_npu::ZeroTensor>& levelZeroTensor,
                                          const ov::element::Type& userTensorElementType) {
-    // corner case for boolean inputs as compiler maps them to u8
-    if (userTensorElementType == ov::element::boolean &&
-        levelZeroTensor->get_element_type() == ov::element::u8) {
+    // The compiler maps boolean inputs to u8, and names a 2-bit signed weight by its u2 storage.
+    if (userTensorElementType != levelZeroTensor->get_element_type() &&
+        intel_npu::zeroUtils::sameStorage(levelZeroTensor->get_element_type(), userTensorElementType)) {
         levelZeroTensor->set_element_type(userTensorElementType);
     }
 }
@@ -1409,6 +1409,8 @@ void ZeroInferRequest::check_network_precision(const ov::element::Type_t precisi
         break;
     case ov::element::Type_t::nf4:
         break;
+    case ov::element::Type_t::i2:
+        break;
     case ov::element::Type_t::u2:
         break;
     case ov::element::Type_t::u4:
@@ -1437,7 +1439,7 @@ void ZeroInferRequest::check_network_precision(const ov::element::Type_t precisi
         break;
     default:
         OPENVINO_THROW("Unsupported tensor precision: " + ov::element::Type(precision).get_type_name() +
-                       "! Supported precisions: FP32, FP16, BF16, FP8, FP4, NF4, U2, U4, I4, U8, I8, "
+                       "! Supported precisions: FP32, FP16, BF16, FP8, FP4, NF4, I2, U2, U4, I4, U8, I8, "
                        "U16, I16, U32, I32, U64, I64, FP64, BOOLEAN");
     }
 }
