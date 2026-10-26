@@ -107,6 +107,8 @@ static inline ov::element::Type_t toOVElementType(const ze_graph_argument_precis
         return ov::element::Type_t::f32;
     case ZE_GRAPH_ARGUMENT_PRECISION_FP64:
         return ov::element::Type_t::f64;
+    case ZE_GRAPH_ARGUMENT_PRECISION_INT2:
+        return ov::element::Type_t::i2;
     case ZE_GRAPH_ARGUMENT_PRECISION_INT4:
         return ov::element::Type_t::i4;
     case ZE_GRAPH_ARGUMENT_PRECISION_INT8:
@@ -138,9 +140,11 @@ static inline ov::element::Type_t toOVElementType(const ze_graph_argument_precis
 
 static inline ov::element::Type_t toStorageType(const ov::element::Type_t type) {
     switch (type) {
-    // The NPU driver stores boolean tensors as u8
+    // The NPU driver stores boolean tensors as u8. The compiler names a 2-bit signed tensor by its u2 storage.
     case ov::element::Type_t::boolean:
         return ov::element::Type_t::u8;
+    case ov::element::Type_t::i2:
+        return ov::element::Type_t::u2;
     default:
         return type;
     }
