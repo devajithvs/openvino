@@ -204,7 +204,7 @@ protected:
 TEST_P(QuantWeightsTestP, MatMul_Conv_QuantWeights) {
     {
         const float matmul_scale = 0.02f, matmul_zp = 1.f;
-        const float conv_scale = 0.05f, conv_zp = 2.f;
+        const float conv_scale = 0.05f, conv_zp = 1.f;
 
         auto input = std::make_shared<v0::Parameter>(ov::element::f32, ov::Shape{1, 128});
         auto matmul_weight = make_dq_weights(qtype, ov::Shape{128, 64}, matmul_scale, matmul_zp);
@@ -231,7 +231,7 @@ TEST_P(QuantWeightsTestP, MatMul_Conv_QuantWeights) {
 
     {
         const float matmul_scale = 0.02f, matmul_zp = 1.f;
-        const float conv_scale = 0.05f, conv_zp = 2.f;
+        const float conv_scale = 0.05f, conv_zp = 1.f;
 
         auto input = std::make_shared<v0::Parameter>(ov::element::f32, ov::Shape{1, 128});
         auto matmul_weight = make_dq_weights(qtype, ov::Shape{128, 64}, matmul_scale, matmul_zp, true);
@@ -257,4 +257,4 @@ TEST_P(QuantWeightsTestP, MatMul_Conv_QuantWeights) {
 INSTANTIATE_TEST_SUITE_P(
     QuantWeightTypes,
     QuantWeightsTestP,
-    ::testing::Values(i32, u32, i16, u16, i8, u8, u6, i4, u4, nf4, u3, u2, u1, f4e2m1, f8e4m3, f8e5m2, f8e8m0));
+    ::testing::Values(i32, u32, i16, u16, i8, u8, u6, i2, i4, u4, nf4, u3, u2, u1, f4e2m1, f8e4m3, f8e5m2, f8e8m0));
