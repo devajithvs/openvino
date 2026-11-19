@@ -9,10 +9,10 @@ from openvino import Type, Shape
 
 
 def pack_data(array: np.ndarray, type: Type) -> np.ndarray:
-    """Represent array values as u1, u2, u3, u4, u6, i4, nf4 or f4e2m1 element type and pack them into uint8 numpy array.
+    """Represent array values as u1, u2, u3, u4, u6, i2, i4, nf4 or f4e2m1 element type and pack them into uint8 numpy array.
 
     For u1: Bit packing from the most significant bit, like the core
-    For u2, u4, i4, nf4, f4e2m1: Bit packing from the least significant bits, like the core
+    For u2, i2, u4, i4, nf4, f4e2m1: Bit packing from the least significant bits, like the core
     For u3, u6: Linear LSB-first bit-stream packing, values may straddle a byte boundary
 
     For the byte-aligned types (u1, u2, u4, i4, nf4, f4e2m1) the values are padded with zeros up to a
@@ -24,7 +24,7 @@ def pack_data(array: np.ndarray, type: Type) -> np.ndarray:
 
     :param array: numpy array with values to pack.
     :type array: numpy array
-    :param type: Type to interpret the array values. Type must be u1, u2, u3, u4, u6, i4, nf4 or f4e2m1.
+    :param type: Type to interpret the array values. Type must be u1, u2, u3, u4, u6, i2, i4, nf4 or f4e2m1.
     :type type: openvino.Type
     :raises RuntimeError: if a value doesn't fit the type: [0, 2^bitwidth - 1] for unsigned types,
                           [-8, 7] for i4, 4-bit codes [0, 15] for nf4 and f4e2m1. u1 is not checked.
@@ -37,9 +37,9 @@ def pack_data(array: np.ndarray, type: Type) -> np.ndarray:
     elif type == Type.u6:
         return _pack_linear(array, 6)
     
-    assert type in [Type.u1, Type.u2, Type.u4, Type.i4, Type.nf4, Type.f4e2m1], "Packing algorithm for the" "data types stored in 1, 2 or 4 bits"
+    assert type in [Type.u1, Type.u2, Type.u4, Type.i2, Type.i4, Type.nf4, Type.f4e2m1], "Packing algorithm for the" "data types stored in 1, 2 or 4 bits"
 
-    minimum_regular_dtype = np.int8 if type == Type.i4 else np.uint8
+    minimum_regular_dtype = np.int8 if type in (Type.i2, Type.i4) else np.uint8
     casted_to_regular_type = array.astype(dtype=minimum_regular_dtype, casting="unsafe")
     if not np.array_equal(casted_to_regular_type, array):
         raise RuntimeError(f'The conversion of array "{array}" to dtype' f' "{casted_to_regular_type}" results in rounding')
@@ -68,7 +68,7 @@ def unpack_data(array: np.ndarray, type: Type, shape: Union[list, Shape]) -> np.
     """Extract openvino element type values from array into new uint8/int8 array given shape.
 
     For u1: Bit unpacking from the most significant bit, like the core
-    For u2, u4, i4, nf4, f4e2m1: Bit unpacking from the least significant bits, like the core
+    For u2, i2, u4, i4, nf4, f4e2m1: Bit unpacking from the least significant bits, like the core
     For u3, u6: Linear LSB-first bit-stream unpacking, values may straddle a byte boundary
 
     Example: uint8 value [135] can be represented as two u4 values and be unpacked into [7, 8]
@@ -77,7 +77,7 @@ def unpack_data(array: np.ndarray, type: Type, shape: Union[list, Shape]) -> np.
 
     :param array: numpy array to unpack.
     :type array: numpy array
-    :param type: Type to extract from array values. Type must be u1, u2, u3, u4, u6, i4, nf4 or f4e2m1.
+    :param type: Type to extract from array values. Type must be u1, u2, u3, u4, u6, i2, i4, nf4 or f4e2m1.
     :type type: openvino.Type
     :param shape: the new shape for the unpacked array.
     :type shape: Union[list, openvino.Shape]
@@ -88,11 +88,14 @@ def unpack_data(array: np.ndarray, type: Type, shape: Union[list, Shape]) -> np.
     elif type == Type.u6:
         return _unpack_linear(array, 6, shape)
     
-    assert type in [Type.u1, Type.u2, Type.u4, Type.i4, Type.nf4, Type.f4e2m1], "Unpacking algorithm for the" "data types stored in 1, 2 or 4 bits"
+    assert type in [Type.u1, Type.u2, Type.u4, Type.i2, Type.i4, Type.nf4, Type.f4e2m1], "Unpacking algorithm for the" "data types stored in 1, 2 or 4 bits"
     if type == Type.u1:
         return np.resize(np.unpackbits(array.view(np.uint8)), list(shape))
 
     unpacked = _unpack_linear(array, type.bitwidth, shape)
+    if type == Type.i2:
+        # Sign-extend: codes 2..3 are -2..-1
+        return (unpacked.astype(np.int8) << 6) >> 6
     if type == Type.i4:
         # Sign-extend: codes 8..15 are -8..-1
         return (unpacked.astype(np.int8) << 4) >> 4
